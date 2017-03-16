@@ -1,0 +1,120 @@
+---
+title: "HW 5 Solution"
+author: "Issac Li (zl368)"
+date: "3/1/2017"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = F, message = F)
+```
+
+## Part 1
+
+```{r p1.a,eval=T}
+require(glmnet)
+train <- read.csv("~/Documents/STAT665/HW5/digits_train.csv",stringsAsFactors = FALSE)
+valid <- read.csv("~/Documents/STAT665/HW5/digits_valid.csv", stringsAsFactors = FALSE)
+X_train <- as.matrix(train[, 1:256])
+y_train <- as.factor(train[, 257])
+X_valid <- as.matrix(valid[, 1:256])
+y_valid <- as.factor(valid[, 257])
+
+```
+
+```{r p1_1_3,eval=F}
+# Lasso Regression
+set.seed(111)
+fit1 <- cv.glmnet(X_train, y_train, family = "multinomial",
+                  type.multinomial = "grouped", type.measure = "class", nfolds = 10)
+plot(fit1)
+
+# Value of lam_min  
+cat(fit1$lambda.min)
+# Value of lam_1se
+cat(fit1$lambda.1se)
+# Make Predictions
+fit1.min <- glmnet(X_train, y_train, family = "multinomial",
+                          type.multinomial = "grouped", lambda = fit1$lambda.min)
+fit1.1se <- glmnet(X_train, y_train, family = "multinomial",
+                          type.multinomial = "grouped", lambda = fit1$lambda.1se)
+y_pred.min <- as.factor(predict(fit1.min, newx = X_valid, type = "class"))
+y_pred.1se <- as.factor(predict(fit1.1se, newx = X_valid, type = "class"))
+
+# MSEs of the two standards
+pred1 <- data.frame(Lambda = c("Min", "1SE"),
+                          MeanError =signif(c(mean(y_pred.min != y_valid),
+                                        mean(y_pred.1se != y_valid)),5))
+pred1
+
+# Number of non-zero coefficients.
+sum(coefficients(fit1.1se)[[1]]!=0)
+```
+
+The number of predictors (excluding the intercept) is 153-1=152 in this case for grouped regression. The number of non-zero coefficients is also 153.
+```{r p1_4 ungrouped,eval=F}
+fit1_ug <- cv.glmnet(X_train, y_train, family = "multinomial",
+                     type.multinomial = "ungrouped", type.measure = "class",
+                     nfolds = 10)
+plot(fit1_ug)
+
+# Value of lam_min  
+cat(fit1_ug$lambda.min)
+# Value of lam_1se
+cat(fit1_ug$lambda.1se)
+
+y_pred_ug.min <- predict(fit1_ug, newx=as.matrix(valid[,-257]), s=fit1_ug$lambda.min ,type="class")
+y_pred_ug.1se <- predict(fit1_ug, newx=as.matrix(valid[,-257]), s=fit1_ug$lambda.1se ,type="class")
+
+# Show MSEs
+pred1_ug <- data.frame(Lambda = c("Min", "1SE"),
+                          MeanError = signif(c(mean(y_pred_ug.min != y_valid),
+                                        mean(y_pred_ug.1se != y_valid)),5))
+pred1_ug
+
+# number of predictors
+coefs <- coef.cv.glmnet(fit1_ug,s="lambda.1se")
+
+# find predictors used for each class and then use the union 
+# to find number of unique predictors.
+predictors=sapply(coefs,function(x) ifelse(x!=0,1,0))
+n_pred=sum(apply(predictors,1,function(x) ifelse(sum(x)==0,0,1)))
+
+cat("Number of predictors:",n_pred)
+
+# number of non-zero coefficients
+coef_n=sapply(coefs,function(x) sum(x!=0))
+
+# number of non-zero coefficients per class
+cat("Number of non-zero coefficients per class:")
+coef_n
+
+# number of total non-zero coefficients
+cat("Number of total non-zero coefficients:",sum(coef_n))
+```
+
+## Part 2
+```{r p2,eval=T}
+set.seed(111)
+fit2 <- cv.glmnet(X_train, y_train, family = "multinomial",
+                  type.measure = "class", nfolds = 10, alpha = 0)
+plot(fit2)
+
+# Value of lam_min  
+cat(fit2$lambda.min)
+# Value of lam_1se
+cat(fit2$lambda.1se)
+# Make Predictions
+
+y_pred2.min <- as.factor(predict(fit2, newx = X_valid, s = fit2$lambda.min, type = "class"))
+y_pred2.1se <- as.factor(predict(fit2, newx = X_valid, s = fit2$lambda.1se,type = "class"))
+
+# Summarize in table
+pred2 <- data.frame(Lambda = c("Min", "1SE"),
+                          MeanError = c(mean(y_pred2.min != y_valid),
+                                        mean(y_pred2.1se != y_valid)))
+pred2
+# 
+```
+
+## Part 3

@@ -1,0 +1,145 @@
+---
+title: "STAT 665 Homework 2"
+author: "Issac Li"
+date: "1/30/2017"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Part I
+
+Impute the NAs in  ```capital_run_length_average``` with k-nn algorithm. 
+
+```{r impute nas}
+require(FNN)
+require(data.table)
+
+train=fread("/Users/lizhuo/Documents/STAT665/HW2/spam_train.csv",header = T)
+test=fread("/Users/lizhuo/Documents/STAT665/HW2/spam_test.csv",header = T)
+paste(sum(is.na(train$capital_run_length_average))," missing values in Training data")
+paste(sum(is.na(test$capital_run_length_average))," missing values in Testing data")
+```
+
+The missing values are approximately distributed with similar proportions so we can merge the two datasets and then do imputation
+to yield better imputation results. 
+
+```{r impute}
+# Combining datasets
+train$group=1
+test$group=2;test$spam=NA
+merged=rbind(train,test)
+# Rescaling and add group numbers for reverse mapping
+merged=data.table(cbind(merged$group,merged$spam,merged$capital_run_length_average,apply(merged[,!c("group","spam","capital_run_length_average"),with=F],2,function(x) scale(x,center = min(x),scale=max(x)-min(x)))))
+
+colnames(merged)[1:3]<-c("group","spam","capital_run_length_average")
+
+# Prepare dataset for imputation
+impute_test=merged[is.na(merged$capital_run_length_average)]
+impute_train=merged[!is.na(merged$capital_run_length_average)]
+
+impute_test_x=impute_test[,!c("capital_run_length_average"),with=F]
+
+impute_train_x=impute_train[,!c("capital_run_length_average"),with=F]
+impute_train_y=impute_train$capital_run_length_average
+
+ans=knn.reg(train =impute_train_x[,!c("group","spam"),with=F],test = impute_test_x[,!c("group","spam"),with=F], y = impute_train_y,k=15)
+
+impute_test$capital_run_length_average=ans$pred
+
+merged=rbind(impute_test,impute_train)
+
+ctrain=merged[group==1,!c("group"),with=F]
+ctest=merged[group==2,!c("group","spam"),with=F]
+  
+paste(sum(is.na(ctrain$capital_run_length_average))," missing values in Training data")
+paste(sum(is.na(ctest$capital_run_length_average))," missing values in Testing data")
+```
+After imputation we can see that there is no more NA’s in the ```capital_run_length_average```
+column in either the training or the test set
+
+
+## Part II
+#### Please see HW2_knnclass.R
+```{r KNN class, echo=FALSE}
+knnclass <- function(xtrain, xtest, ytrain) {
+  # Standarize columns
+  mu = colMeans(xtrain)
+  sd = sqrt(apply(xtrain,2,var))
+  strain = data.table(apply(xtrain,2,function(x) (x-mean(x))/sqrt(var(x))))
+  # Split training dataset
+  train_ind <- sample(seq_len(nrow(xtrain)), size = floor(nrow(xtrain)*0.8))
+  subxtrain = xtrain[train_ind,]
+  subxtest = xtrain[-train_ind,]
+  subytrain = ytrain[train_ind]
+  subytest = ytrain[-train_ind]
+  
+  # Select optimal k
+  subytrain=as.numeric(as.matrix(subytrain))
+  cal_d<-function(xvec1,xmatrix){
+    apply(xmatrix,1,function (x) sqrt(sum((xvec1-x)^2)))
+  }
+  dmatrix=apply(subxtest,1,cal_d,xmatrix=subxtrain)
+
+  cal_class<-function(subxtest,dmatrix,subytrain,k=3){
+    kmatrix=apply(t(dmatrix),1,order)[2:k+1,]
+    yresponse=colMeans(apply(kmatrix,2,function(x) subytrain[x]))
+    yclass=ifelse(yresponse>=0.5,1,0)
+    return(yclass)
+  }
+  
+  MSE_k=c()
+  for (k in seq(3,nrow(subxtest)/10)){
+  yclass=cal_class(subxtest,dmatrix,subytrain,k=k)
+  MSE_k=c(MSE_k,mean(sum((yclass-subytest)^2)))
+  }
+  
+  op_k=(which.min(MSE_k)+3)
+  dmatrix=apply(xtest,1,cal_d,xmatrix=xtrain)
+  yclass=cal_class(xtest,dmatrix,ytrain,k=op_k)
+
+return(yclass)
+}
+```
+
+## Part III
+```{r p3,warning=F,message=F}
+# Use KNN to Predict spam without ```capital_run_length_average```
+knn_pred1 = knnclass(xtrain = ctrain[,!c("capital_run_length_average","spam"),with=F],
+                     xtest = ctest[,!c("capital_run_length_average"),with=F],
+                     ytrain = ctrain$spam)
+
+
+# Use KNN to Predict spam with ```capital_run_length_average```
+knn_pred2 = knnclass(xtrain = ctrain[,!c("spam"),with=F],
+                     xtest = ctest,
+                     ytrain = ctrain$spam)
+
+# Use logistic regression to predict spam without ```capital_run_length_average```
+log_fit1=glm(data=ctrain,formula = spam ~ .-capital_run_length_average,family = "binomial")
+logm_pred1=predict(log_fit1,newdata = ctest,type = "response")
+logm_pred1=ifelse(logm_pred1>=0.5,1,0)
+
+# Use logistic regression to predict spam with ```capital_run_length_average```
+log_fit2=glm(data=ctrain,formula = spam ~ .,family = "binomial")
+logm_pred2=predict(log_fit2,newdata = ctest,type = "response")
+logm_pred2=ifelse(logm_pred2>=0.5,1,0)
+
+summary.glm(log_fit2)
+results=cbind(ctest$capital_run_length_average,knn_pred1,knn_pred2,logm_pred1,logm_pred2)
+colnames(results)[1]<-"capital_run_length_average"
+write.csv(results,file = "HW2_zl368_results.csv")
+```
+
+Based on the regression summary, we can see that emails with the following characteristics correlate with high probability of being spam:    
+  1. High frequence of the following words:  
+    * our, over, remove, internet, mail, free, business, your, 000, money, hp, hpl,george, 85, technology, pm, meeting, confernce
+  2. High frequence of the following chars:  
+    * $, !
+  3. Long capital run length:
+    * Length of longest capital run length > total capital run length > average capital run length
+
+
+

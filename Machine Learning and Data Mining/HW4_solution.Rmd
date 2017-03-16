@@ -1,0 +1,148 @@
+---
+title: "HW4_solution"
+author: "Issac Li"
+date: "2/20/2017"
+output: 
+  word_document:
+    fig_width: 10
+    fig_height: 8
+---
+
+```{r setup, include=FALSE,echo=T,message=F}
+knitr::opts_chunk$set(echo = TRUE,message = F, warning = F)
+```
+
+## Part I
+
+```{r load}
+require(data.table)
+communities=fread("/Users/lizhuo/Documents/STAT665/HW4/communities.csv",header=T)
+# Unique States
+length(unique(communities$state))
+
+# Unique County
+# Apparently counties with same ID in different states are distinct counties.
+state_county=unique(communities[,list(state,county)])
+lb=dim(state_county)[1]
+# We do not have information on whether NAs counties are distinct or not, so the maximum possible 
+# no of counties should treat all NAs as different, but excludes the NAs already counted above. 
+ub=dim(state_county)[1]+sum(is.na(communities$county))-sum(is.na(state_county$county))
+paste("The number of unique counties is between",lb,"and",ub)
+
+# Frequency Table 1
+find_na<-function(x){
+ sum(is.na(x))
+}
+ftable <-data.frame(table(communities[, apply(.SD,2, find_na)]))
+colnames(ftable)<-c("# Missing","Freq")
+ftable
+
+# Reduce data
+reduced<-communities[,colSums(is.na(communities))<(nrow(communities)*0.5),with=F]
+ftable <-data.frame(table(reduced[, apply(.SD,2, find_na)]))
+colnames(ftable)<-c("# Missing","Freq")
+ftable
+
+# Plot hist of ```ViolentCrimesPerPop```
+hist(reduced$ViolentCrimesPerPop,nclass=100,xlab="ViolentCrimesPerPop")
+```
+
+We can see that the distribution of data is left-skewed and the data is normalized between 0 and 1.
+
+```{r}
+# Remove any column with missing values
+reduced<-reduced[,colSums(is.na(reduced))==0,with=F]
+
+# Drop the name, fold and goal column 
+reduced_mat<-reduced[,-c("communityname","fold","ViolentCrimesPerPop"),with=F]
+# Now we have 100 columns
+dim(reduced_mat)
+
+# Remove those highly correlated variables
+reduced_mat=matrix(as.numeric(unlist(reduced_mat)),nrow = 1994,ncol = 100,dimnames = list(1:1994,colnames(reduced_mat)))
+cor_mat=cor(reduced_mat)
+
+cor_mat[lower.tri(cor_mat)]=0
+res=which(cor_mat>=0.9 & cor_mat!=1,arr.ind = T)
+
+# These predictors are probably redundant
+tail(res[order(res[,1]),])
+
+# Remove all the predictors in the second column
+to_remove=unique(res[,2])
+upper=colnames(reduced_mat)[-to_remove]
+
+# We have successfully reduced the maximal possible # of predictors by 30%. 
+length(upper)
+
+# State can be considered a nominal predictive factor here (factorized), but when
+# doing k-fold cross validation, levels maybe missing due to truncated dataset, so 
+# I have to remove this factor, even though it explains more variance in-sample
+
+reduced<-reduced[,-c("state"),with=F]
+upper=upper[-1]
+
+fit.full=lm(formula = as.formula(paste("ViolentCrimesPerPop~",paste(upper,collapse = "+"))),data = reduced)
+fit.null=lm(formula = ViolentCrimesPerPop~1,data = reduced)
+fit.for=step(object = fit.null,scope = list(upper=fit.full),trace = F,direction = "forward")
+
+fit.back=step(object = fit.full,trace = F,direction = "backward")
+fit.bi=step(object = fit.null,scope = list(upper=fit.full),trace = F,direction = "both")
+
+table1<-data.frame(matrix(NA,3,2,dimnames = list(c("fit.for","fit.back","fit.bi"),c("R^2","No Terms"))))
+
+f1 <- formula(fit.for)
+f2 <- formula(fit.back)
+f3 <- formula(fit.bi)
+
+table1$No.Terms[1]<-length(strsplit(as.character(f1[3])[[1]],split = "+",fixed=T)[[1]])
+table1$No.Terms[2]<-length(strsplit(as.character(f2[3])[[1]],split = "+",fixed=T)[[1]])
+table1$No.Terms[3]<-length(strsplit(as.character(f3[3])[[1]],split = "+",fixed=T)[[1]])
+
+table1$R.2[1]<-summary(fit.for)$`r.squared`
+table1$R.2[2]<-summary(fit.back)$`r.squared`
+table1$R.2[3]<-summary(fit.bi)$`r.squared`
+
+round(table1,3)
+```
+
+## Part III
+
+We can see that the model selected by bi-directional stepwise procedure is the best in terms of model complexity with an $R^2$ value very close to the other two.
+
+```{r part III}
+summary(fit.bi)
+
+
+MSE=0
+k=10
+n=nrow(reduced)
+for (i in 1:k){
+valid_ind=which(reduced$fold==i,arr.ind = F)
+fit.temp=lm(formula = f3,data = reduced[-valid_ind,])
+pred_lm=predict.lm(fit.temp,newdata = reduced[valid_ind,])
+# Calculate Average MSE
+MSE=MSE+1/n*sum((reduced[valid_ind,c(ViolentCrimesPerPop)]-pred_lm)^2)
+}
+
+MSE
+```
+
+The raw MSE is 0.0184. However, this value is not very interpretative in absolute sense since all the data are normalized. This value can nonetheless help us determining difference between models relatively.
+
+```{r bootstrap}
+# Do a bootstrap 1000 times and produce practical 90% CI for R^2
+R.sqs=rep(NA,1000)
+
+for( i in 1:1000){
+set.seed(i*8+13)
+samples=sample(1:nrow(reduced),nrow(reduced),replace = T)
+R.sqs[i]=summary(lm(formula = f3,data = reduced[samples,]))$`r.squared`
+}
+
+lb=quantile(R.sqs,0.05)
+ub=quantile(R.sqs,0.95)
+hist(R.sqs,nclass = 100, main = "Boostrapped R Squares")
+abline(v=c(lb,ub),col="dark red",lty=2,lwd=2)
+legend(0.7,y=30,bty = "n" ,legend = "90% CI",lty=2,col="dark red")
+```
